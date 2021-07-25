@@ -1,7 +1,7 @@
 <template>
   <div class="container">
     <label class="label" for="min-word-len">
-      Minimum Word Length: {{ minWordLen }}
+      Minimum word length: {{ minWordLen }}
     </label>
     <input
       id="min-word-len"
@@ -9,6 +9,16 @@
       min="3"
       max="9"
       v-model="minWordLen"
+    />
+    <label class="label" for="min-word-len">
+      Bits per word: {{ bitsPerWord }}
+    </label>
+    <input
+      id="bits-per-word"
+      type="range"
+      min="8"
+      max="16"
+      v-model="bitsPerWord"
     />
     <p>
       <input
@@ -20,8 +30,10 @@
       <label for="shuffle">Shuffle?</label>
     </p>
 
-    <p>Corpus size: {{ corpus.length }}</p>
-    <p>Vocabulary size: {{ vocab.length }}</p>
+    <div v-if="corpus">
+      <p>Corpus size: {{ corpus.length }}</p>
+      <p>Vocabulary size: {{ vocab.length }}</p>
+    </div>
 
     <label for="input-data">Input data (bytes)</label>
     <input id="input-data" type="text" class="input" v-model="inputData" />
@@ -36,101 +48,60 @@
 
 <script lang="ts">
 import { defineComponent } from "vue";
-import { memoize } from "decko";
-import { Vocab } from "./lib/vocab";
+import { omitPrefixes, squareShuffle, Vocab } from "./lib/vocab";
 import { stringToWords, wordsToString } from "./lib/format";
-
-import corpus from "./assets/unigram_freq.json";
-// const corpus: Word[] = [];
 
 import "bulma/bulma.sass";
 
-const corpusLimit = 50000;
-const bitsPerWord = 12;
-const vocabSize = 2 ** bitsPerWord;
-
-interface Word {
-  word: string;
-  count: number;
-}
-
-function sortAlph(words: Word[]): Word[] {
-  return words.sort((a: Word, b: Word) => {
-    if (a.word == b.word) return 0;
-    if (a.word < b.word) return -1;
-    return 1;
-  });
-}
-
-function omitPrefixes(cands: Word[]): Word[] {
-  const ok: Word[] = [];
-  let last: Word | null = null;
-  sortAlph(cands).forEach((cand) => {
-    if (!last || !cand.word.startsWith(last.word)) {
-      ok.push(cand);
-      last = cand;
-    }
-  });
-  ok.sort((a: Word, b: Word) => b.count - a.count);
-  return ok;
-}
-
-function shuffle(words: string[]): string[] {
-  // TODO: Fix
-  const bucketCount = Math.ceil(Math.sqrt(words.length));
-  const subLists: string[][] = [];
-  for (let i = 0; i < bucketCount; i++) {
-    subLists.push([]);
-  }
-  for (let i = 0; i < bucketCount; i++) {
-    let j = 0;
-    while (j < words.length) {
-      subLists[i].push(words[j]);
-      j += bucketCount;
-    }
-  }
-  return subLists.flat();
-}
-
-class Provider {
-  @memoize
-  static withMinLen(minWordLen: number): Word[] {
-    return corpus
-      .slice(0, corpusLimit)
-      .filter(({ word }) => word.length >= minWordLen);
-  }
-
-  @memoize
-  static withoutPrefixes(minWordLen: number): Word[] {
-    return omitPrefixes(Provider.withMinLen(minWordLen));
-  }
-
-  static vocab(minWordLen: number, shuf: boolean): Vocab {
-    let words = Provider.withoutPrefixes(minWordLen)
-      .slice(0, vocabSize)
-      .map(({ word }) => word);
-    if (shuf) words = shuffle(words);
-    return new Vocab(words);
-  }
+interface Data {
+  corpus: string[] | null;
+  minWordLen: number;
+  bitsPerWord: number;
+  shuffle: boolean;
+  inputData: string;
+  inputWords: string;
 }
 
 export default defineComponent({
   name: "App",
-  data: () => ({
-    corpus,
-    minWordLen: 6,
-    shuffle: false,
-    inputData: "Hi!",
-    inputWords: "",
-  }),
+  data(): Data {
+    return {
+      corpus: null,
+      minWordLen: 6,
+      bitsPerWord: 12,
+      shuffle: true,
+      inputData: "Hi!",
+      inputWords: "",
+    };
+  },
+  async mounted() {
+    const resp = await fetch("/unigrams.txt");
+    const r = resp.body?.getReader();
+    if (!r) throw new Error("Could not fetch unigrams: empty body");
+    const raw = (await r.read()).value;
+    if (!raw) throw new Error("Could not fetch unigrams: reading body failed");
+    this.corpus = new TextDecoder()
+      .decode(raw)
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((w) => w.length > 0);
+  },
   computed: {
-    vocab(): Vocab {
-      return Provider.vocab(this.minWordLen, this.shuffle);
+    vocab(): Vocab | undefined {
+      if (!this.corpus) return;
+      let words = this.corpus.slice();
+      words = words.filter((w) => w.length >= this.minWordLen);
+      words = omitPrefixes(words);
+      words = words.slice(0, 2 ** this.bitsPerWord);
+      if (this.shuffle) words = squareShuffle(words);
+      return new Vocab(words);
     },
-    outputWords(): string {
+    outputWords(): string | undefined {
+      if (!this.vocab) return;
       return stringToWords(this.vocab, this.inputData).join(" ");
     },
-    outputData(): string {
+    outputData(): string | undefined {
+      if (!this.vocab) return;
       const matches = this.inputWords.match(/\w+/g);
       if (!matches) return "";
       return wordsToString(this.vocab, matches);
