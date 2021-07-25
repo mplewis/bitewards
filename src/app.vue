@@ -37,12 +37,9 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import { memoize } from "decko";
-import {
-  Vocab,
-  stringToWords,
-  wordsToString,
-  wordsToString,
-} from "./lib/format";
+import { Vocab } from "./lib/vocab";
+import { stringToWords, wordsToString } from "./lib/format";
+
 import corpus from "./assets/unigram_freq.json";
 // const corpus: Word[] = [];
 
