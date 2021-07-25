@@ -37,7 +37,14 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import { memoize } from "decko";
+import {
+  Vocab,
+  stringToWords,
+  wordsToString,
+  wordsToString,
+} from "./lib/format";
 import corpus from "./assets/unigram_freq.json";
+// const corpus: Word[] = [];
 
 import "bulma/bulma.sass";
 
@@ -71,71 +78,6 @@ function omitPrefixes(cands: Word[]): Word[] {
   return ok;
 }
 
-function concat(bytes: number[]): BigInt {
-  if (bytes.length === 0) return 0n;
-  let s = "0b";
-  bytes.forEach((byte) => (s += leftPad("0", 8, byte.toString(2))));
-  console.log({ s });
-  return BigInt(s);
-}
-
-function group(n: number, i: string): string[] {
-  let g = [];
-  for (let x = 0; x < i.length; x += n) g.push(i.slice(x, x + n));
-  return g;
-}
-
-function leftPad(pad: string, len: number, val: string) {
-  let v = val;
-  while (v.length < len) {
-    v = pad + v;
-  }
-  return v;
-}
-
-function leftPadMod(pad: string, mod: number, val: string) {
-  let v = val;
-  while (v.length % mod !== 0) {
-    v = pad + v;
-  }
-  return v;
-}
-
-function encode(vocab: string[], bytes: number[]): string[] {
-  const rawBin = leftPadMod("0", bitsPerWord, concat(bytes).toString(2)); // HACK
-  const chunks = group(bitsPerWord, rawBin);
-  let lastChunk = chunks.pop();
-  if (!lastChunk) throw new Error("No chunk data");
-  lastChunk = leftPad("0", bitsPerWord, lastChunk);
-  chunks.push(lastChunk);
-  console.log({ bytes, rawBin, chunks });
-  const nums = chunks.map((c) => parseInt(c, 2));
-  return nums.map((n) => vocab[n]);
-}
-
-function revLookup(vocab: string[]): { [k: string]: number } {
-  const l: { [k: string]: number } = {};
-  vocab.forEach((word, i) => {
-    l[word] = i;
-  });
-  return l;
-}
-
-function decode(vocab: string[], words: string[]): string {
-  if (words.length === 0) return "";
-  let bin = "";
-  const l = revLookup(vocab);
-  console.log({ vocab, l });
-  words.forEach((word) => {
-    const num = l[word];
-    if (!num) throw new Error(`Unknown word: ${word}`);
-    bin += leftPad("0", bitsPerWord, num.toString(2));
-  });
-  const bytes = group(8, bin).map((ns) => parseInt(ns, 2));
-  console.log({ bin, bytes });
-  return new TextDecoder().decode(new Uint8Array(bytes));
-}
-
 function shuffle(words: string[]): string[] {
   // TODO: Fix
   const bucketCount = Math.ceil(Math.sqrt(words.length));
@@ -166,12 +108,12 @@ class Provider {
     return omitPrefixes(Provider.withMinLen(minWordLen));
   }
 
-  static vocab(minWordLen: number, shuf: boolean): string[] {
-    const words = Provider.withoutPrefixes(minWordLen)
+  static vocab(minWordLen: number, shuf: boolean): Vocab {
+    let words = Provider.withoutPrefixes(minWordLen)
       .slice(0, vocabSize)
       .map(({ word }) => word);
-    if (shuf) return shuffle(words);
-    return words;
+    if (shuf) words = shuffle(words);
+    return new Vocab(words);
   }
 }
 
@@ -185,19 +127,16 @@ export default defineComponent({
     inputWords: "",
   }),
   computed: {
-    vocab(): string[] {
+    vocab(): Vocab {
       return Provider.vocab(this.minWordLen, this.shuffle);
     },
     outputWords(): string {
-      return encode(
-        this.vocab,
-        Array.from(new TextEncoder().encode(this.inputData))
-      ).join(" ");
+      return stringToWords(this.vocab, this.inputData).join(" ");
     },
     outputData(): string {
-      const words = this.inputWords.match(/\w+/g);
-      if (!words) return "";
-      return decode(this.vocab, words);
+      const matches = this.inputWords.match(/\w+/g);
+      if (!matches) return "";
+      return wordsToString(this.vocab, matches);
     },
   },
 });
